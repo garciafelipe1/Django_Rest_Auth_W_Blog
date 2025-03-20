@@ -1,18 +1,21 @@
-from rest_framework_api.views import StandardAPIView
+from rest_framework_api.views import StandardAPIView,APIView
 from rest_framework.exceptions import NotFound,APIException
 from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Q
 import redis
+
 from rest_framework.response import Response
-from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
-from .models import Post,Heading,PostAnalytics,Category,CategoryAnalytics
+from .models import Post,Heading,PostAnalytics,Category,CategoryAnalytics,PostView,PostInteraccion
 from .serializers import PostSerializer,PostListSerializer,HeadingSerializer,CategoryListSerializer
 from .utils import get_client_ip
 from .tasks import increment_post_views_task
 from django.db.models import Prefetch
+from apps.authentication.models import UserAccount
 from faker import Faker
+
+
 import random
 import uuid
 from django.utils.text import slugify
@@ -90,35 +93,70 @@ class PostListView(APIView):
             return Response({"detail": str(nf)}, status=404)
         except Exception as e:
             return Response({"detail": f"Internal server error: {str(e)}"}, status=500)
-class PostDetailView(APIView):
+class PostDetailView(StandardAPIView):
     
-    def get(self,request):
-        
-        ip_address=get_client_ip(request)
-        
-        slug=request.query_params.get("slug")
-        
-        try:
-            cached_post = cache.get(f"post:{slug}")
-            if cached_post:
-                increment_post_views_task.delay(cached_post['slug'],ip_address)
-                return Response(cached_post)
-            
-            
-            post = Post.postobjects.get(slug=slug)
-            serializer_post = PostSerializer(post).data
-            
-            cache.set(f"post_detail:{slug}",serializer_post, timeout=60 * 5)
-            
-            increment_post_views_task.delay(post.slug, ip_address)
-            
-        except Post.DoesNotExist:
-            raise NotFound(detail="the requested post does not exist")
-        except Exception as e:
-            raise APIException(detail=f"An unexpected error ocurred: {str(e)}")
-        
-        return Response(serializer_post)
 
+    def get(self, request):
+        ip_address = get_client_ip(request)
+        slug = request.query_params.get("slug")
+        user = request.user if request.user.is_authenticated else None
+
+        if not slug:
+            raise NotFound(detail="A valid slug must be provided")
+
+        try:
+            # Verificar si los datos están en caché
+            cache_key = f"post_detail:{slug}"
+            cached_post = cache.get(cache_key)
+            if cached_post:
+                serialized_post = PostSerializer(cached_post, context={'request': request}).data
+                self._register_view_interaction(cached_post, ip_address, user)
+                return self.response(serialized_post)
+
+            # Si no está en caché, obtener el post de la base de datos
+            try:
+                post = Post.objects.get(slug=slug)
+            except Post.DoesNotExist:
+                raise NotFound(f"Post {slug} does not exist.")
+
+            serialized_post = PostSerializer(post, context={'request': request}).data
+
+            # Guardar en el caché
+            cache.set(cache_key, post, timeout=60 * 5)
+
+            # Registrar interaccion
+            self._register_view_interaction(post, ip_address, user)
+            
+
+        except Post.DoesNotExist:
+            raise NotFound(detail="The requested post does not exist")
+        except Exception as e:
+            raise APIException(detail=f"An unexpected error occurred: {str(e)}")
+
+        return self.response(serialized_post)
+    def _register_view_interaction(self, post, ip_address, user):
+        """
+        Registra la interacción de tipo 'view', maneja incrementos de vistas únicas 
+        y totales, y actualiza PostAnalytics.
+        """
+        # Verifica si esta IP y usuario ya registraron una vista única
+        if not PostView.objects.filter(post=post, ip_address=ip_address, user=user).exists():
+            # Crea un registro de vista unica
+            PostView.objects.create(post=post, ip_address=ip_address, user=user)
+
+            try:
+                PostInteraccion.objects.create(
+                    user=user,
+                    post=post,
+                    interaction_type="view",
+                    ip_address=ip_address,
+                )
+            except Exception as e:
+                raise ValueError(f"Error creeating PostInteraction: {e}")
+
+            analytics, _ = PostAnalytics.objects.get_or_create(post=post)
+            analytics.increment_metric('views')
+           
 
 class PostHeadingsView(APIView):
     serializer_class=HeadingSerializer
@@ -319,8 +357,10 @@ class GenerateFakePostView(StandardAPIView):
         
         for _ in range(posts_to_generate):
             title = fake.sentence(nb_words=6)
+            user=UserAccount.objects.get(username="felipe1")
             post = Post(
                 id=uuid.uuid4(),
+                user=user,
                 title = title,
                 description= fake.sentence(nb_words=12),
                 content=fake.paragraph(nb_sentences=5),

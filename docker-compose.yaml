@@ -3,11 +3,11 @@ services:
   blog_w_authentication_backend:
    container_name: django_blog_w_authentication
    build: .
-   command: uvicorn core.asgi:application --host 0.0.0.0 --port 8003 --reload
+   command: uvicorn core.asgi:application --host 0.0.0.0 --port 8004 --reload
    volumes:
      - .:/app
    ports:
-     - 8003:8003
+     - 8004:8004
    depends_on:
      - blog_w_authentication_django_redis
      - blog_w_authentication_django_db

@@ -4,13 +4,13 @@ from .models import UserAccount
 
 
 class UserAccountAdmin(UserAdmin):
-    list_display = ('email', 'username','first_name','last_name' ,'is_active', 'is_superuser')
+    list_display = ('email', 'username','first_name','last_name' ,'is_active', 'is_superuser','role','verified',)
     
     list_filter = ('is_active','is_staff', 'is_superuser','created_at')
     
     fieldsets = (
         
-        (None, {'fields': ('email', 'username', 'password')}),
+        (None, {'fields': ('email', 'username', 'password', 'verified','role')}),
         ('Personal Info', {'fields': ('first_name', 'last_name')}),
         ('Permissions', {'fields': ('is_active','is_staff', 'is_superuser','groups', 'user_permissions')}),
         ('Important dates', {'fields': ('last_login', 'created_at', 'updated_at')})
@@ -20,13 +20,15 @@ class UserAccountAdmin(UserAdmin):
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('email','username','first_name','last_name','password1', 'password2','is_active','is_staff', 'is_superuser'),
+            'fields': ('email','username','first_name','role','verified','last_name','password1', 'password2','is_active','is_staff', 'is_superuser',),
         }),
     )
     
     search_fields = ('email', 'username', 'first_name', 'last_name')
     ordering = ('email', )
     readonly_fields=('created_at', 'updated_at')
+    list_editable=("role","verified",)
+    
 admin.site.register(UserAccount, UserAccountAdmin)
     
     

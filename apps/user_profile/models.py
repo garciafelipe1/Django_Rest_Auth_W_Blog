@@ -28,13 +28,13 @@ class UserProfile(models.Model):
     snapchat= models.URLField(blank=True,null=True)
 
 
+    
+    
       
-# def post_user_registered(user,*args,**kwargs):
-#     print("user registered")
-    
+      
 def post_user_activated(user, *args, **kwargs):
-    profile=UserProfile.objects.create(user=user)
-    
-# user_registered.connect(post_user_registered)
+    # Verifica si el perfil no existe antes de crearlo
+    if not UserProfile.objects.filter(user=user).exists():
+        UserProfile.objects.create(user=user)
+
 user_activated.connect(post_user_activated)
-        
