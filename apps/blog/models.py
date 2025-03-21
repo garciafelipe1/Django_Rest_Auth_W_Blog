@@ -327,12 +327,7 @@ def create_post_analytics(sender,instance,created,**kwargs):
 def create_category_analytics(sender,instance,created,**kwargs):
     if created:
         CategoryAnalytics.objects.create(category=instance)
-
-
    
-    
-
-    
 @receiver(post_save,sender=PostView)
 def handle_post_like(sender,instance,created,**kwargs):
     if created:

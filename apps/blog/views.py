@@ -16,7 +16,8 @@ from .models import (
     CategoryAnalytics,
     PostView,
     PostInteraccion,
-    Comment
+    Comment,
+    PostLike,
 )
 from .serializers import (
     PostSerializer,
@@ -623,6 +624,72 @@ class CommentReplyViews(StandardAPIView):
         
          
         cache.delete(cache_index_key)
+        
+        
+        
+class PostLikeView(StandardAPIView):
+    permissions_classes=[permissions.IsAuthenticated] 
+    
+    def post(self,request):
+        
+        post_slug=request.data.get("slug",None)
+        user=request.user
+        ip_address=get_client_ip(request)
+        
+        if not post_slug:
+            raise NotFound(detail="A valid post slug must be provided")
+        
+        try:
+            post=Post.objects.get(slug=post_slug)
+        except Post.DoesNotExist:
+            raise ValueError(f"post:{post_slug} does not exist")
+        
+        if PostLike.objects.filter(post=post,user=user).exists():
+            
+            raise ValidationError(detail="You have already liked this post")
+        
+        PostLike.objects.create(post=post,user=user)
+        
+        PostInteraccion.objects.create(
+            user=user,
+            post=post,
+            interaction_type="like",
+            ip_address=ip_address
+        )
+        
+        analytics, _ = PostAnalytics.objects.get_or_create(post=post)
+        analytics.increment_metric("likes")
+        
+        return self.response(f"you have a liked the post {post.title}")
+    
+    def delete(self,request):
+        
+        post_slug=request.query_params.get("slug",None)
+        user=request.user
+
+        if not post_slug:
+            raise NotFound(detail="A valid post slug must be provided")
+        
+        try:
+            post = Post.objects.get(slug=post_slug)
+        except Post.DoesNotExist:
+            raise ValueError(f"post with a slug:{post_slug} does not exist")
+            
+        try:
+            like=PostLike.objects.get(post=post,user=user)
+        except PostLike.DoesNotExist:
+            raise ValidationError(detail="You have not liked this post")
+        
+        like.delete()
+        
+        
+        analytics, _ = PostAnalytics.objects.get_or_create(post=post)
+        analytics.likes=PostLike.objects.filter(post=post).count()
+        analytics.save()
+        
+        return self.response(f"you have unliked the post {post.title}")
+        
+        
 class GenerateFakePostView(StandardAPIView):
     
     def get(self,request):

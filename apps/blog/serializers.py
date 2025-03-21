@@ -74,6 +74,8 @@ class PostSerializer(serializers.ModelSerializer):
     headings=HeadingSerializer(many=True)
     view_count=serializers.SerializerMethodField()
     comments_count=serializers.SerializerMethodField()
+    likes_count=serializers.SerializerMethodField()
+    user=serializers.StringRelatedField()
     
     class Meta:
         model=Post
@@ -84,6 +86,9 @@ class PostSerializer(serializers.ModelSerializer):
     
     def get_comments_count(self,obj):
         return obj.post_comments.filter(parent=None,is_active=True).count()
+    
+    def get_likes_count(self,obj):
+        return obj.likes.filter().count()
  
 class PostListSerializer(serializers.ModelSerializer):
     category=CategorySerializer()

@@ -14,6 +14,7 @@ from .views import(
     ListPostCommentsView,
     ListCommentRepliesView,
     CommentReplyViews,
+    PostLikeView,
     ) 
 
 urlpatterns = [
@@ -30,6 +31,8 @@ urlpatterns = [
     path('post/comments/', ListPostCommentsView.as_view()),
     path('post/comment/replies/', ListCommentRepliesView.as_view()),
     path('post/comment/reply/', CommentReplyViews.as_view()),
+    path('post/comment/reply/', CommentReplyViews.as_view()),
+    path('post/like/', PostLikeView.as_view()),
     
     
     
