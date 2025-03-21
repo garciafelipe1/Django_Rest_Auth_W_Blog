@@ -9,7 +9,8 @@ from .views import(
     GenerateFakePostView,
     CategoryListView,
     IncrementCategoryClicksView,
-    CategoryDetailView
+    CategoryDetailView,
+    PostCommentViews
     ) 
 
 urlpatterns = [
@@ -22,6 +23,8 @@ urlpatterns = [
     path('categories/', CategoryListView.as_view(), name="category-list"),
     path('category/increment_clicks/', IncrementCategoryClicksView.as_view(), name="increment-category-click"),
     path('category/posts/', CategoryDetailView.as_view(), name="category-posts"),
+    path('post/comment/', PostCommentViews.as_view()),
+    
     
     
 ]

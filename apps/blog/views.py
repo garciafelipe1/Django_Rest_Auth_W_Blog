@@ -2,19 +2,36 @@ from rest_framework_api.views import StandardAPIView,APIView
 from rest_framework.exceptions import NotFound,APIException
 from django.conf import settings
 from django.core.cache import cache
+from rest_framework import permissions
 from django.db.models import Q
 import redis
 
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from .models import Post,Heading,PostAnalytics,Category,CategoryAnalytics,PostView,PostInteraccion
-from .serializers import PostSerializer,PostListSerializer,HeadingSerializer,CategoryListSerializer
+from .models import (
+    Post,
+    Heading,
+    PostAnalytics,
+    Category,
+    CategoryAnalytics,
+    PostView,
+    PostInteraccion,
+    Comment
+)
+from .serializers import (
+    PostSerializer,
+    PostListSerializer,
+    HeadingSerializer,
+    CategoryListSerializer,
+    CommentSerializer
+    
+    )
 from .utils import get_client_ip
 from .tasks import increment_post_views_task
 from django.db.models import Prefetch
 from apps.authentication.models import UserAccount
 from faker import Faker
-
+from utils.string_utils import sanitize_string
 
 import random
 import uuid
@@ -340,8 +357,63 @@ class IncrementCategoryClicksView(APIView):
             "clicks":category_analytics.clicks             
         })           
            
-           
-           
+class PostCommentViews(StandardAPIView):
+    
+    def get(self,request):
+        
+        
+        return self.paginate(request,"Comentarios") 
+    
+    def post(self,request):
+        
+        
+        
+        post_slug=request.data.get("post_slug",None)
+        user=request.user
+        ip_address=get_client_ip(request)
+        content=sanitize_string(request.data.get("content",None))
+        
+        
+        
+        if not post_slug:
+            raise NotFound(detail="A valid post slug must be provided")
+        
+        try:
+            post=Post.objects.get(slug=post_slug)
+        
+        except Post.DoesNotExist:
+            raise ValueError(f"post:{post_slug} does not exist")
+        
+        comment=Comment.objects.create(
+            user=user,
+            post=post,
+            content=content,
+        )
+        
+        self._register_comment_interaction(comment,post,ip_address,user)
+        
+        return self.response(f"comment created for post:{post.title}")
+    
+    def put(self,request):
+        
+        
+        return self.response("ok")   
+    
+    def delete(self,request):
+        return self.response("ok")
+
+    def _register_comment_interaction(self,comment,post,ip_address,user):
+
+        PostInteraccion.objects.create(
+            user=user,
+            post=post,
+            interaction_type="comment",
+            comment=comment,)
+    
+        analytics, _ = PostAnalytics.objects.get_or_create(post=post)
+        analytics.increment_metric("comments")   
+        
+        
 class GenerateFakePostView(StandardAPIView):
     
     def get(self,request):

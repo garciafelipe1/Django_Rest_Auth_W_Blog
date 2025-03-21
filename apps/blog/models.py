@@ -329,13 +329,7 @@ def create_category_analytics(sender,instance,created,**kwargs):
         CategoryAnalytics.objects.create(category=instance)
 
 
-@receiver (post_save,sender=Comment)
-def handle_post_comment(sender,instance,created,**kwargs):
-    if created:
-        PostInteraccion.objects.create(user=instance.user,post=instance.post,interaction_type="comment",comment=instance)
-    
-    analytics,_=PostAnalytics.objects.get_or_create(post=instance.post)
-    analytics.increment_comments()   
+   
     
 
     
