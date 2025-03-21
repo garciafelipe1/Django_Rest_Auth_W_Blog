@@ -335,7 +335,27 @@ class CategoryDetailView(APIView):
             raise APIException(detail=f"An unexpected error occurred: {str(e)}")         
            
            
-                     
+class ListPostCommentsView(StandardAPIView):
+    def get(self,request):
+        
+        post_slug= request.query_params.get("slug",None)
+        
+        if not post_slug:
+            raise NotFound(detail="A valid post slug must be provided")
+        
+        try:
+            post=Post.objects.get(slug=post_slug)
+        except Post.DoesNotExist:
+            raise ValueError(f"Post:{post_slug} does not exist")
+        
+        comments = Comment.objects.filter(post=post,parent=None)
+        
+        
+        serialized_comments=CommentSerializer(comments,many=True).data
+        
+        return self.paginate(request,serialized_comments)   
+    
+                      
 class IncrementCategoryClicksView(APIView):
     
     def post(self,request):
@@ -358,11 +378,8 @@ class IncrementCategoryClicksView(APIView):
         })           
            
 class PostCommentViews(StandardAPIView):
-    
-    def get(self,request):
-        
-        
-        return self.paginate(request,"Comentarios") 
+    permissions_classes=[permissions.IsAuthenticated]
+     
     
     def post(self,request):
         
@@ -396,11 +413,48 @@ class PostCommentViews(StandardAPIView):
     
     def put(self,request):
         
+        comment_id=request.data.get("comment_id",None)
+        user=request.user
+        content=sanitize_string(request.data.get("content",None))
         
-        return self.response("ok")   
+        if not comment_id:
+            raise NotFound(detail="A valid comment id must be provided")
+        
+        try:
+            comment=Comment.objects.get(id=comment_id,user=user)
+        except Comment.DoesNotExist:
+            raise ValueError(f"comment:{comment_id} does not exist")
+        
+        comment.content=content
+        comment.save()
+        
+        return self.response("Comment updated successfuly")   
     
     def delete(self,request):
-        return self.response("ok")
+        comment_id=request.query_params.get("comment_id",None)
+        user=request.user
+        
+        if not comment_id:
+            raise NotFound(detail="A valid comment id must be provided")
+        
+        try:
+            comment=Comment.objects.get(id=comment_id,user=user)
+        except Comment.DoesNotExist:
+            raise ValueError(f"comment:{comment_id} does not exist")
+        
+        post=comment.post
+        post_analytics, _ = PostAnalytics.objects.get_or_create(post=comment.post)
+        
+        
+        comment.delete()
+        
+        comments_count=Comment.objects(post=post, is_active=True).count()
+        
+        post_analytics.comments = comments_count
+        post_analytics.save()
+        
+        
+        return self.response("comment delete succesfuly")
 
     def _register_comment_interaction(self,comment,post,ip_address,user):
 
@@ -408,12 +462,82 @@ class PostCommentViews(StandardAPIView):
             user=user,
             post=post,
             interaction_type="comment",
-            comment=comment,)
+            comment=comment,
+            ip_address=ip_address
+            
+            )
     
         analytics, _ = PostAnalytics.objects.get_or_create(post=post)
         analytics.increment_metric("comments")   
+ 
+ 
+class ListCommentRepliesView(StandardAPIView):
+    permissions_classes=[permissions.IsAuthenticated]
+    def get(self,request):
+        
+        comment_id=request.query_params.get("comment_id",None)
+        
+        if not comment_id:
+            raise NotFound(detail="A valid comment id must be provided")
+        
+        try:
+            parent_comment=Comment.objects.get(id=comment_id)
+        except Comment.DoesNotExist:
+            raise NotFound(f"comment:{comment_id} does not exist")
         
         
+        replies=parent_comment.replies.filter(is_active=True).order_by("-created_at")
+        
+        serialized_comment_replies=CommentSerializer(replies,many=True).data
+        
+        
+        return self.paginate(request,serialized_comment_replies) 
+        
+class CommentReplyViews(StandardAPIView):
+    permissions_classes=[permissions.IsAuthenticated]
+    
+    def post(self,request):
+        
+        comment_id=request.data.get("comment_id",None)
+        user=request.user
+        ip_address=get_client_ip(request)
+        content=sanitize_string(request.data.get("content",None))
+        
+        if not comment_id:
+            raise NotFound(detail="A valid comment id must be provided")
+        
+        try:
+            parent_comment=Comment.objects.get(id=comment_id)
+        except Comment.DoesNotExist:
+            raise ValueError(f"comment:{comment_id} does not exist")
+        
+        
+        comment= Comment.objects.create(
+            user=user,
+            post=parent_comment.post,
+            parent=parent_comment,
+            content=content,
+              
+        )
+        
+        self._register_comment_interaction(comment,comment.post,ip_address,user)
+        
+        return self.response("comment created successfuly")
+
+    def _register_comment_interaction(self,comment,post,ip_address,user):
+
+        PostInteraccion.objects.create(
+            user=user,
+            post=post,
+            interaction_type="comment",
+            comment=comment,
+            ip_address=ip_address
+            
+            )
+    
+        analytics, _ = PostAnalytics.objects.get_or_create(post=post)
+        analytics.increment_metric("comments")
+    
 class GenerateFakePostView(StandardAPIView):
     
     def get(self,request):

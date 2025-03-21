@@ -10,7 +10,10 @@ from .views import(
     CategoryListView,
     IncrementCategoryClicksView,
     CategoryDetailView,
-    PostCommentViews
+    PostCommentViews,
+    ListPostCommentsView,
+    ListCommentRepliesView,
+    CommentReplyViews,
     ) 
 
 urlpatterns = [
@@ -24,6 +27,10 @@ urlpatterns = [
     path('category/increment_clicks/', IncrementCategoryClicksView.as_view(), name="increment-category-click"),
     path('category/posts/', CategoryDetailView.as_view(), name="category-posts"),
     path('post/comment/', PostCommentViews.as_view()),
+    path('post/comments/', ListPostCommentsView.as_view()),
+    path('post/comment/replies/', ListCommentRepliesView.as_view()),
+    path('post/comment/reply/', CommentReplyViews.as_view()),
+    
     
     
     

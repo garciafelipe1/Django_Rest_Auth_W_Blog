@@ -73,6 +73,7 @@ class PostSerializer(serializers.ModelSerializer):
     category=CategorySerializer()
     headings=HeadingSerializer(many=True)
     view_count=serializers.SerializerMethodField()
+    comments_count=serializers.SerializerMethodField()
     
     class Meta:
         model=Post
@@ -80,6 +81,9 @@ class PostSerializer(serializers.ModelSerializer):
     
     def get_view_count(self,obj):
         return obj.post_analytics.views if obj.post_analytics else 0
+    
+    def get_comments_count(self,obj):
+        return obj.post_comments.filter(parent=None,is_active=True).count()
  
 class PostListSerializer(serializers.ModelSerializer):
     category=CategorySerializer()
@@ -155,7 +159,8 @@ class PostInteraccionSerializer(serializers.ModelSerializer):
 class CommentSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField()
     post_title= serializers.SerializerMethodField()
-    replies=serializers.SerializerMethodField()
+    replies_count=serializers.SerializerMethodField()
+    # replies=serializers.SerializerMethodField()
     
     
     class Meta:
@@ -170,7 +175,8 @@ class CommentSerializer(serializers.ModelSerializer):
             "created_at",
             "update_at",
             "is_active",
-            "replies",
+            "replies_count",
+            # "replies",
             
         ]
         
@@ -179,7 +185,10 @@ class CommentSerializer(serializers.ModelSerializer):
     
     def get_replies(self,obj):
         replies= obj.replies.filter(is_active=True)
-        return CommentSerializer(replies,many=True).data 
+        return CommentSerializer(replies,many=True).data
+    
+    def get_replies_count(self,obj):
+        return obj.replies.filter(is_active=True).count()
 
 
 
