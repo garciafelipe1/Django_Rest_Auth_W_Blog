@@ -167,7 +167,10 @@ class PostShare(models.Model):
     id=models.UUIDField(primary_key=True,default=uuid.uuid4, editable=False)
     post=models.ForeignKey(Post, on_delete=models.CASCADE,related_name='shares')
     user=models.ForeignKey(User,on_delete=models.CASCADE,related_name='post_share',null=True,blank=True)
-    plataform=models.CharField(max_length=50,choices=(("facebook","Facebook"),("twitter","Twitter"),("linkedin","Linkedin"),("whatsapp","Whatsapp"),("telegram","Telegram")),blank=True,null=True)
+    plataform=models.CharField(
+        max_length=50,
+        choices=(("facebook","Facebook"),("twitter","Twitter"),("linkedin","Linkedin"),("whatsapp","Whatsapp"),("telegram","Telegram")),
+        blank=True,null=True)
     timestapm=models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

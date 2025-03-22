@@ -73,9 +73,11 @@ class PostSerializer(serializers.ModelSerializer):
     category=CategorySerializer()
     headings=HeadingSerializer(many=True)
     view_count=serializers.SerializerMethodField()
+    has_liked=serializers.SerializerMethodField()
     comments_count=serializers.SerializerMethodField()
     likes_count=serializers.SerializerMethodField()
     user=serializers.StringRelatedField()
+    
     
     class Meta:
         model=Post
@@ -89,6 +91,15 @@ class PostSerializer(serializers.ModelSerializer):
     
     def get_likes_count(self,obj):
         return obj.likes.filter().count()
+    
+    def get_has_liked(self,obj):
+        
+        user = self.context.get('request').user
+        if user and user.is_authenticated:
+            return PostLike.objects.filter(post=obj,user=user).exists()
+        
+        return False
+        
  
 class PostListSerializer(serializers.ModelSerializer):
     category=CategorySerializer()

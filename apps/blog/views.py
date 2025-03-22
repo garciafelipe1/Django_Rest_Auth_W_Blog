@@ -3,7 +3,10 @@ from rest_framework.exceptions import NotFound,APIException,ValidationError
 from django.conf import settings
 from django.core.cache import cache
 from rest_framework import permissions
-from django.db.models import Q
+from django.db.models.functions import Coalesce
+from django.db.models import Q,F,Value
+from rest_framework import status
+
 import redis
 
 from rest_framework.response import Response
@@ -18,6 +21,7 @@ from .models import (
     PostInteraccion,
     Comment,
     PostLike,
+    PostShare,
 )
 from .serializers import (
     PostSerializer,
@@ -32,7 +36,7 @@ from .tasks import increment_post_views_task
 from django.db.models import Prefetch
 from apps.authentication.models import UserAccount
 from faker import Faker
-from utils.string_utils import sanitize_string
+from utils.string_utils import sanitize_string,sanitize_html
 
 import random
 import uuid
@@ -41,76 +45,275 @@ from rest_framework.pagination import PageNumberPagination
 
 redis_client=redis.Redis(host=settings.REDIS_HOST,port=6379,db=0)
 
+
+class PostAuthorViews(StandardAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        user=request.user
+        if user.role == "customer":
+            return self.error("you do noy have permission to create post")
+        
+        posts = Post.objects.filter(user=user)
+        
+        if not posts.exists():
+            raise NotFound(detail="No posts found")
+        
+        
+        serialized_post=PostListSerializer(posts,many=True).data
+        
+        
+        return self.paginate(request,serialized_post)
+
+
+    def put(self, request):
+        
+        user=request.user
+        if user.role == "customer":
+            return self.error("you do noy have permission to create post")
+        
+        post_slug=request.data.get("post_slug",None)
+        
+        if not post_slug:
+            raise NotFound(detail="Post slug  must be provided")
+        
+        try:
+            post = Post.objects.get(slug=post_slug,user=user)
+        except Post.DoesNotExist:
+            raise NotFound(f"Post {post_slug} does not exist.")
+        
+        title=sanitize_string(request.data.get("title",None))
+        description = sanitize_string(request.data.get("description", None))
+        content=sanitize_html(request.data.get("content",None))
+        post_status=sanitize_string(request.data.get("status","draft"))
+        category_slug=slugify(request.data.get("category",post.category.slug))
+        
+        
+        if category_slug:
+            try:
+                category=Category.objects.get(slug=category_slug)
+            except Category.DoesNotExist:
+                return self.error(f"Category '{category_slug}' does not exist",status=400)
+            
+            post.category=category
+ 
+        if title:
+            post.title=title
+        
+        if description is not None:
+            post.description = description
+        
+        if content:
+            post.content=content
+        
+        
+        
+        post.status=post_status
+        
+        headings=request.data.get("headings",[])
+        if headings:
+            post.headings.all().delete()
+            for heading_data in headings:
+                Heading.objects.create(
+                    post=post,
+                    title=heading_data.get("title"),
+                    level=heading_data.get("level"),
+                    order=heading_data.get("order"),
+                )
+        
+        post.save()
+        
+        
+        return self.response(f"post {post.title} updated successfuly")
+      
+    def post(self, request):
+        
+        user=request.user
+        if user.role == "customer":
+            return self.error("you do noy have permission to create post")
+        
+        
+        required_fields = ["title","content", "slug", "category"]
+        
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
+        
+        if missing_fields:
+            return self.error(f"Missing required fields: {', '.join(missing_fields)}")
+        
+        
+        title=sanitize_string(request.data.get("title",None))
+        description=sanitize_string(request.data.get("description",""))
+        content=sanitize_html(request.data.get("content",None))
+        
+        keywords=sanitize_string(request.data.get("keywords",""))
+        slug=slugify(request.data.get("slug",None))
+        category_slug=slugify(request.data.get("category",None))
+        
+        try:
+            category=Category.objects.get(slug=category_slug)
+        except Category.DoesNotExist:
+            return self.error(f"Category '{category_slug}' does not exist",status=400)
+        
+        try:
+            post =Post.objects.create(
+                user=user,
+                title=title,
+                description=description,
+                content=content,
+                keywords=keywords,
+                slug=slug,
+                category=category
+            )
+            
+        
+            headings=request.data.get("headings",[]) 
+            for heading_data in headings:
+                Heading.objects.create(
+                    post=post,
+                    title=heading_data.get("title"),
+                    slug=heading_data.get("slug"),
+                    level=heading_data.get("level"),
+                    order=heading_data.get("order")
+                )
+                 
+        except Exception as e:
+            return self.error(f"Error creating post: {str(e)}")
+  
+        return self.response(f"Post '{post.title}' created successfully")
+    
+    
+    def delete(self, request):
+        user=request.user
+        if user.role == "customer":
+            return self.error("you do noy have permission to create post")
+        
+        post_slug=request.query_params.get("slug",None)
+        
+        if not post_slug:
+            raise NotFound(detail="Post slug  must be provided")
+        
+        try:
+            post = Post.objects.get(slug=post_slug,user=user)
+        except Post.DoesNotExist:
+            raise NotFound(f"Post {post_slug} does not exist.")
+        
+        post.delete()
+        
+        
+        
+        return self.response(f"post {post.title} deleted successfuly")
+
 class PostPagination(PageNumberPagination):
     page_size = 10  
     page_size_query_param = 'page_size'
     max_page_size = 50  
 
 
-class PostListView(APIView):
+class PostListView(StandardAPIView):
+    
 
     def get(self, request, *args, **kwargs):
         try:
+            # Parametros de solicitud
             search = request.query_params.get("search", "").strip()
-            sort = request.query_params.get("sort", "created_at")
-            sort_order = request.query_params.get("order", "desc")
-            categories = request.query_params.getlist("category", [])
-            page = request.query_params.get('page', '1')
+            sorting = request.query_params.get("sorting", None)
+            ordering = request.query_params.get("ordering", None)
+            author = request.query_params.get("author", None)
+            is_featured = request.query_params.get("is_featured", None)
+            categories = request.query_params.getlist("categories", [])
+            page = request.query_params.get("p", "1")
 
-            # Validar que la página es un número válido
-            try:
-                page = int(page)
-            except ValueError:
-                return Response({"detail": "Invalid page number"}, status=400)
+            # Construir clave de cache para resultados paginados
+            cache_key = f"post_list:{search}:{sorting}:{ordering}:{author}:{categories}:{is_featured}:{page}"
+            cached_posts = cache.get(cache_key)
+            if cached_posts:
+                # Serializar los datos del caché
+                serialized_posts = PostListSerializer(cached_posts, many=True).data
+                # Incrementar impresiones en Redis para los posts del caché
+                for post in cached_posts:
+                    redis_client.incr(f"post:impressions:{post.id}")  # Usar `post.id`
+                return self.paginate(request, serialized_posts)
 
-            valid_sort_fields = {"title", "created_at"}
-            if sort not in valid_sort_fields:
-                sort = "created_at"
+            # Consulta inicial optimizada con nombres de anotación únicos
+            posts = Post.postobjects.all().select_related("category").annotate(
+                analytics_views=Coalesce(F("post_analytics__views"), Value(0)),
+                analytics_likes=Coalesce(F("post_analytics__likes"), Value(0)),
+                analytics_comments=Coalesce(F("post_analytics__comments"), Value(0)),
+                analytics_shares=Coalesce(F("post_analytics__shares"), Value(0)),
+            )
+            
+            # Filtrar por autor
+            if author:
+                posts = posts.filter(user__username=author)
 
-            sort = f"-{sort}" if sort_order == "desc" else sort
-
-            cache_key = f"post_list:{search}:{sort}:{','.join(categories)}:page_{page}"
-            cached_data = cache.get(cache_key)
-
-            # Si hay datos en caché, devolver toda la respuesta (incluyendo paginación)
-            if cached_data:
-                return Response(cached_data, status=200)
-
-            posts = Post.postobjects.all()
-
-            if search:
-                posts = posts.filter(Q(title__icontains=search) | Q(description__icontains=search))
-
-            if categories:
-                posts = posts.filter(category__name__in=categories).distinct()
-
-            posts = posts.order_by(sort)
-
+            # Si no hay posts del autor, responder inmediatamente
             if not posts.exists():
-                raise NotFound(detail="No posts found")
+                raise NotFound(detail=f"No posts found for author: {author}")
+            
+            # Filtrar por busqueda
+            if search:
+                posts = posts.filter(
+                    Q(title__icontains=search) |
+                    Q(description__icontains=search) |
+                    Q(content__icontains=search) |
+                    Q(keywords__icontains=search) |
+                    Q(category__name__icontains=search)
+                )
+            
+            # Filtrar por categoria
+            if categories:
+                category_queries = Q()
+                for category in categories:
+                    # Check if category is a valid uuid
+                    try:
+                        uuid.UUID(category)
+                        uuid_query = (
+                            Q(category__id=category)
+                        )
+                        category_queries |= uuid_query
+                    except ValueError:
+                        slug_query = (
+                            Q(category__slug=category)
+                        )
+                        category_queries |= slug_query
+                posts = posts.filter(category_queries)
+            
+            # Filtrar por posts destacados
+            if is_featured:
+                # Convertir el valor del parámetro a booleano
+                is_featured = is_featured.lower() in ['true', '1', 'yes']
+                posts = posts.filter(featured=is_featured)
+            
+            # Ordenamiento
+            if sorting:
+                if sorting == "newest":
+                    posts = posts.order_by("-created_at")
+                elif sorting == 'az':
+                    posts = posts.order_by("title")
+                elif sorting == 'za':
+                    posts = posts.order_by("-title")
+                elif sorting == "recently_updated":
+                    posts = posts.order_by("-updated_at")
+                elif sorting == "most_viewed":
+                    posts = posts.order_by("-analytics_views") 
 
-            # Aplicar paginación
-            paginator = PostPagination()
-            paginated_posts = paginator.paginate_queryset(posts, request, view=self)
+            # if ordering:
 
-            if paginated_posts is None:
-                raise NotFound(detail="Pagination error")
+            # Guardar los objetos en el caché
+            cache.set(cache_key, posts, timeout=60 * 5)
 
-            # Serializar los datos
-            serializer_posts = PostListSerializer(paginated_posts, many=True).data
+            # Serializar los datos para la respuesta
+            serialized_posts = PostListSerializer(posts, many=True).data
 
-            # Obtener la respuesta paginada
-            paginated_response = paginator.get_paginated_response(serializer_posts)
+            # Incrementar impresiones en Redis
+            for post in posts:
+                redis_client.incr(f"post:impressions:{post.id}")  # Usar `post.id`
 
-            # Guardar la respuesta completa en caché
-            cache.set(cache_key, paginated_response.data, timeout=60 * 5)
-
-            return paginated_response
-
-        except NotFound as nf:
-            return Response({"detail": str(nf)}, status=404)
+            return self.paginate(request, serialized_posts)
+        except NotFound as e:
+            return self.response([], status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({"detail": f"Internal server error: {str(e)}"}, status=500)
+            raise APIException(detail=f"An unexpected error occurred: {str(e)}")
 class PostDetailView(StandardAPIView):
     
 
@@ -403,7 +606,7 @@ class PostCommentViews(StandardAPIView):
         post_slug=request.data.get("post_slug",None)
         user=request.user
         ip_address=get_client_ip(request)
-        content=sanitize_string(request.data.get("content",None))
+        content=sanitize_html(request.data.get("content",None))
         
         
         
@@ -431,7 +634,7 @@ class PostCommentViews(StandardAPIView):
     def put(self, request):
         comment_id = request.data.get("comment_id", None)
         user = request.user
-        content = sanitize_string(request.data.get("content", None))
+        content = sanitize_html(request.data.get("content", None))
 
         if not comment_id:
             raise NotFound(detail="A valid comment id must be provided")
@@ -573,7 +776,7 @@ class CommentReplyViews(StandardAPIView):
         comment_id=request.data.get("comment_id",None)
         user=request.user
         ip_address=get_client_ip(request)
-        content=sanitize_string(request.data.get("content",None))
+        content=sanitize_html(request.data.get("content",None))
         
         if not comment_id:
             raise NotFound(detail="A valid comment id must be provided")
@@ -689,6 +892,49 @@ class PostLikeView(StandardAPIView):
         
         return self.response(f"you have unliked the post {post.title}")
         
+ 
+class PostShareView(StandardAPIView):
+    permissions_classes=[permissions.IsAuthenticated]
+    def post(self,request):
+        
+        
+        post_slug=request.data.get("slug",None)
+        plataform=request.data.get("plataform","other").lower()
+        user= request.user if request.user.is_authenticated else None
+        ip_address=get_client_ip(request)
+        
+        if not post_slug:
+            raise NotFound(detail="A valid post slug must be provided")
+        
+        try:
+            post= Post.objects.get(slug=post_slug)
+        except Post.DoesNotExist:
+            raise NotFound(detail=f"post:{post_slug} does not exist")
+        
+        valid_plataforms=[choice[0] for choice in PostShare._meta.get_field("plataform").choices]
+        if plataform not in valid_plataforms:
+            raise ValidationError(detail=f"invalid plataform. Valid options are {', '.join(valid_plataforms)}")
+        
+        PostShare.objects.create(
+            post=post,
+            user=user,
+            plataform=plataform
+            )
+
+        PostInteraccion.objects.create(
+            user=user,
+            post=post,
+            interaction_type="share",
+            ip_address=ip_address
+        )
+        
+        analytics, _ = PostAnalytics.objects.get_or_create(post=post)
+        analytics.increment_metric("shares")
+        
+        
+        
+        return self.response(f"post '{post.title}' shared successfuly on {plataform.capitalize()}")
+ 
         
 class GenerateFakePostView(StandardAPIView):
     
